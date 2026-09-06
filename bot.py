@@ -116,8 +116,23 @@ def parse_dates(args):
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
-    await message.reply("Welcome! Use `/settoken YOUR_TOKEN` and `/setpage YOUR_PAGE_ID` to connect your Meta account. Then use `/topfb` or `/topig`.")
-
+    welcome_text = (
+        "👋 <b>Welcome to the Top Engager Bot!</b> 🏆\n\n"
+        "I can help you find the most active fans on your Facebook and Instagram pages.\n\n"
+        "⚙️ <b>1. Setup Commands (Run these first):</b>\n"
+        "• <code>/settoken YOUR_META_TOKEN</code> : Connect your Meta Page Token.\n"
+        "• <code>/setpage YOUR_PAGE_ID</code> : Connect your Facebook Page ID.\n\n"
+        "📊 <b>2. Analytics Commands:</b>\n"
+        "• <code>/topfb</code> : Get your top Facebook fan (recent 100 posts).\n"
+        "• <code>/topig</code> : Get your top Instagram fan (recent 100 posts).\n\n"
+        "📅 <b>3. Advanced Date Filters:</b>\n"
+        "You can add timeframes to your commands!\n"
+        "• <code>/topfb week</code> : Top fan in the past 7 days.\n"
+        "• <code>/topig 2026-09-03 2026-09-08</code> : Top fan between specific dates (YYYY-MM-DD)."
+    )
+    # Using parse_mode="HTML" makes the text bold and formats the commands nicely
+    await message.reply(welcome_text, parse_mode="HTML")
+    
 @dp.message(Command("settoken"))
 async def set_token(message: types.Message, command: CommandObject):
     if not command.args:
