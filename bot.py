@@ -88,6 +88,8 @@ def fetch_ig_top_user():
     if not interactions: return "No recent Instagram comments found."
     top_user = Counter(interactions).most_common(1)[0]
     return f"🏆 Top Instagram Fan: @{top_user[0]} ({top_user[1]} comments)"
+
+@dp.message(Command("topfb"))
 async def get_top_fb(message: types.Message):
     await message.reply("Fetching Facebook data... this takes a few seconds.")
     # In a production bot, heavy API requests should be run in a separate thread/executor
