@@ -28,37 +28,45 @@ def run_server():
 # --- BOT LOGIC ---
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
 def fetch_fb_top_user():
     interactions = []
     
     # 1. Get up to 100 recent posts
-    res = requests.get(f"{BASE_URL}/{PAGE_ID}/posts?limit=100&access_token={META_TOKEN}").json()
+    url = f"{BASE_URL}/{PAGE_ID}/posts?limit=100&access_token={META_TOKEN}"
+    res = requests.get(url).json()
+    
+    # --- 🚨 ERROR TRAPPING ADDED HERE ---
+    if 'error' in res:
+        return f"❌ Facebook API Error: {res['error'].get('message')}"
+        
     posts = res.get('data', [])
+    
+    if not posts:
+        return "❌ No posts found! Check if the Page ID is correct and the token has 'pages_read_user_content' permission."
     
     for post in posts:
         post_id = post['id']
         
-        # 2. Tally Comments (Limit 100)
-        comments = requests.get(f"{BASE_URL}/{post_id}/comments?limit=100&access_token={META_TOKEN}").json().get('data', [])
-        for c in comments:
+        # 2. Tally Comments
+        comments_res = requests.get(f"{BASE_URL}/{post_id}/comments?limit=100&access_token={META_TOKEN}").json()
+        for c in comments_res.get('data', []):
             if 'from' in c:
                 user_id = str(c['from'].get('id'))
-                # Prevent the bot/page from counting itself
                 if user_id != str(PAGE_ID):
                     interactions.append(c['from']['name'])
         
-        # 3. Tally Reactions (Limit 100)
-        reactions = requests.get(f"{BASE_URL}/{post_id}/reactions?limit=100&access_token={META_TOKEN}").json().get('data', [])
-        for r in reactions:
+        # 3. Tally Reactions
+        reactions_res = requests.get(f"{BASE_URL}/{post_id}/reactions?limit=100&access_token={META_TOKEN}").json()
+        for r in reactions_res.get('data', []):
             user_id = str(r.get('id'))
             if user_id != str(PAGE_ID):
                 interactions.append(r['name'])
 
-    if not interactions: return "No recent Facebook activity found."
+    if not interactions: 
+        return "No recent Facebook comments or reactions found on your fetched posts."
+        
     top_user = Counter(interactions).most_common(1)[0]
     return f"🏆 Top Facebook Fan: {top_user[0]} ({top_user[1]} interactions)"
-
 
 def fetch_ig_top_user():
     # 1. Fetch the connected IG Account ID and Username
