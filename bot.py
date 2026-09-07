@@ -36,9 +36,10 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # --- API FETCH FUNCTIONS ---
+
 def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
     interactions = []
-    user_names = {} 
+    user_names = {} # Dictionary to remember names based on their ID
     
     url = f"{BASE_URL}/{page_id}/posts?limit=100&access_token={meta_token}"
     if since: url += f"&since={since}"
@@ -57,7 +58,7 @@ def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
         for c in comments_res.get('data', []):
             if 'from' in c:
                 user_id = str(c['from'].get('id'))
-                name = c['from'].get('name', 'مستخدم غير معروف')
+                name = c['from'].get('name', 'Unknown User')
                 if user_id != str(page_id): 
                     interactions.append(user_id)
                     user_names[user_id] = name
@@ -71,13 +72,15 @@ def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
                 interactions.append(user_id)
                 user_names[user_id] = name
 
-    if not interactions: return "لم يتم العثور على أي تفاعل حديث على فيسبوك."
+    if not interactions: return ".لم يتم العثور على أي تفاعل حديث على فيسبوك"
     
+    # Get the ID of the winner, then look up their name
     top_user_id, count = Counter(interactions).most_common(1)[0]
     top_name = user_names.get(top_user_id, "مستخدم غير معروف")
     
-    profile_url = f"https://www.facebook.com/{top_user_id}"
-    return f"🏆 أكثر متفاعل على فيسبوك: <a href='{profile_url}'>{top_name}</a> ({count} تفاعلات)"
+    # Removed the broken URL and simply format the name in bold
+    return f"🏆 أكثر متفاعل على فيسبوك: <b> {top_name}</b> ({count} تفاعلات)"
+
 
 def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
     ig_res = requests.get(f"{BASE_URL}/{page_id}?fields=instagram_business_account{{id,username}}&access_token={meta_token}").json()
