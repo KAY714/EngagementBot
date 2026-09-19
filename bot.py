@@ -6,9 +6,10 @@ from datetime import datetime, timedelta
 from collections import Counter
 from flask import Flask
 from threading import Thread
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.filters.command import CommandObject
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- ENVIRONMENT VARIABLES ---
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -36,10 +37,9 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # --- API FETCH FUNCTIONS ---
-
 def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
     interactions = []
-    user_names = {} # Dictionary to remember names based on their ID
+    user_names = {} 
     
     url = f"{BASE_URL}/{page_id}/posts?limit=100&access_token={meta_token}"
     if since: url += f"&since={since}"
@@ -53,17 +53,15 @@ def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
     
     for post in posts:
         post_id = post['id']
-        # Tally Comments by ID
         comments_res = requests.get(f"{BASE_URL}/{post_id}/comments?limit=100&access_token={meta_token}").json()
         for c in comments_res.get('data', []):
             if 'from' in c:
                 user_id = str(c['from'].get('id'))
-                name = c['from'].get('name', 'Unknown User')
+                name = c['from'].get('name', 'مستخدم غير معروف')
                 if user_id != str(page_id): 
                     interactions.append(user_id)
                     user_names[user_id] = name
         
-        # Tally Reactions by ID
         reactions_res = requests.get(f"{BASE_URL}/{post_id}/reactions?limit=100&access_token={meta_token}").json()
         for r in reactions_res.get('data', []):
             user_id = str(r.get('id'))
@@ -72,15 +70,13 @@ def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
                 interactions.append(user_id)
                 user_names[user_id] = name
 
-    if not interactions: return ".لم يتم العثور على أي تفاعل حديث على فيسبوك"
+    if not interactions: return "لم يتم العثور على أي تفاعل حديث على فيسبوك."
     
-    # Get the ID of the winner, then look up their name
     top_user_id, count = Counter(interactions).most_common(1)[0]
     top_name = user_names.get(top_user_id, "مستخدم غير معروف")
     
-    # Removed the broken URL and simply format the name in bold
-    return f"🏆 أكثر متفاعل على فيسبوك: <b> {top_name}</b> ({count} تفاعلات)"
-
+    # Facebook profile links don't work due to Meta Privacy, so we format the name in Bold instead.
+    return f"🏆 أكثر متفاعل على فيسبوك: <b>{top_name}</b> ({count} تفاعلات)"
 
 def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
     ig_res = requests.get(f"{BASE_URL}/{page_id}?fields=instagram_business_account{{id,username}}&access_token={meta_token}").json()
@@ -110,7 +106,6 @@ def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
     if not interactions: return "لم يتم العثور على أي تعليقات حديثة على إنستغرام."
     
     top_username, count = Counter(interactions).most_common(1)[0]
-    
     profile_url = f"https://www.instagram.com/{top_username}/"
     return f"🏆 أكثر متفاعل على إنستغرام: <a href='{profile_url}'>@{top_username}</a> ({count} تعليقات)"
 
@@ -125,26 +120,75 @@ def parse_dates(args):
         until = parts[1]
     return since, until
 
-# --- TELEGRAM COMMANDS ---
+
+# --- TELEGRAM COMMANDS & MENUS ---
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
-    welcome_text = (
-        "👋 <b>أهلاً بك في بوت أكثر المتفاعلين!</b> 🏆\n\n"
-        "يمكنني مساعدتك في العثور على المعجبين الأكثر نشاطاً على صفحتك في فيسبوك وإنستغرام.\n\n"
-        "⚙️ <b>1. أوامر الإعداد (قم بتشغيلها أولاً):</b>\n"
-        "• <code>/settoken YOUR_META_TOKEN</code> : ربط رمز التوكن (Token) الخاص بك.\n"
-        "• <code>/setpage YOUR_PAGE_ID</code> : ربط معرف صفحة فيسبوك الخاص بك (Page ID).\n\n"
+    # Step 1: Ask for device type
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📱 هاتف", callback_data="show_usage"),
+            InlineKeyboardButton(text="💻 حاسوب", callback_data="show_usage")
+        ]
+    ])
+    await message.reply("👋 <b>مرحباً بك في بوت المتفاعلين!</b>\n\nلتقديم أفضل تجربة لك، ما هو الجهاز الذي تستخدمه حالياً؟", reply_markup=keyboard, parse_mode="HTML")
+
+
+@dp.callback_query(F.data == "show_usage")
+async def show_usage_menu(callback: types.CallbackQuery):
+    # Step 2: Show the commands usage
+    usage_text = (
+        "✅ <b>ممتاز! إليك طريقة استخدام البوت:</b>\n\n"
+        "⚙️ <b>1. أوامر الإعداد (مطلوبة أولاً):</b>\n"
+        "• <code>/settoken YOUR_META_TOKEN</code> : لربط رمز التوكن الخاص بك.\n"
+        "• <code>/setpage YOUR_PAGE_ID</code> : لربط معرف صفحة فيسبوك الخاصة بك.\n\n"
         "📊 <b>2. أوامر التحليلات:</b>\n"
-        "• <code>/topfb</code> : احصل على المعجب الأنشط في فيسبوك (آخر 100 منشور).\n"
-        "• <code>/topig</code> : احصل على المعجب الأنشط في إنستغرام (آخر 100 منشور).\n\n"
-        "📅 <b>3. عوامل تصفية التواريخ المتقدمة:</b>\n"
-        "يمكنك إضافة نطاقات زمنية لأوامرك!\n"
-        "• <code>/topfb week</code> : المعجب الأنشط في الأيام الـ 7 الماضية.\n"
-        "• <code>/topig 2026-09-03 2026-09-08</code> : المعجب الأنشط بين تواريخ محددة (YYYY-MM-DD)."
+        "• <code>/topfb</code> : لاستخراج أكثر متفاعل على فيسبوك.\n"
+        "• <code>/topig</code> : لاستخراج أكثر متفاعل على إنستغرام.\n\n"
+        "📅 <b>3. عوامل تصفية التواريخ المتقدمة (اختياري):</b>\n"
+        "• <code>/topfb week</code> : الأنشط في الأيام الـ 7 الماضية.\n"
+        "• <code>/topig 2026-09-03 2026-09-08</code> : الأنشط بين تواريخ محددة."
     )
-    await message.reply(welcome_text, parse_mode="HTML")
     
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📖 شرح كيفية الحصول على Token و Page ID", callback_data="show_tutorial")]
+    ])
+    
+    # Edit the message to replace the device selection with usage instructions
+    await callback.message.edit_text(usage_text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "show_tutorial")
+async def show_tutorial_menu(callback: types.CallbackQuery):
+    # Step 3: Show the step-by-step tutorial
+    tutorial_text = (
+        "<b>📖 شرح كيفية الحصول على Token و Page ID:</b>\n\n"
+        "1️⃣ اذهب إلى موقع <a href='https://developers.facebook.com/tools/explorer/'>مستكشف Meta Graph API</a>.\n"
+        "2️⃣ في خانة <b>Meta App</b> اختر تطبيقك.\n"
+        "3️⃣ في خانة <b>User or Page</b>، انقر على القائمة المنسدلة واختر <b>Get Page Access Token</b>.\n"
+        "4️⃣ قم بتسجيل الدخول، ووافق على الصلاحيات واختر صفحتك.\n"
+        "5️⃣ من قسم الأذونات (Permissions) تأكد من إضافة ما يلي:\n"
+        "  • <code>pages_show_list</code>\n"
+        "  • <code>pages_read_engagement</code>\n"
+        "  • <code>pages_read_user_content</code>\n"
+        "  • <code>instagram_basic</code>\n"
+        "  • <code>instagram_manage_comments</code>\n"
+        "6️⃣ اضغط على الزر الأزرق <b>Generate Access Token</b>.\n"
+        "7️⃣ انسخ الرمز الطويل الذي سيظهر (هذا هو <code>META_TOKEN</code>).\n"
+        "8️⃣ في نفس الصفحة، ستجد رقم معرف الصفحة بجوار اسمها (هذا هو <code>PAGE_ID</code>).\n\n"
+        "🔙 <i>بعد الانتهاء، قم بنسخها واستخدم أوامر <code>/settoken</code> و <code>/setpage</code> في البوت.</i>"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 العودة للقائمة السابقة", callback_data="show_usage")]
+    ])
+    
+    await callback.message.edit_text(tutorial_text, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
+    await callback.answer()
+
+
 @dp.message(Command("settoken"))
 async def set_token(message: types.Message, command: CommandObject):
     if not command.args:
@@ -190,6 +234,7 @@ async def get_top_ig(message: types.Message, command: CommandObject):
     result = fetch_ig_top_user(creds[0], creds[1], since, until)
     
     await message.reply(result, parse_mode="HTML", disable_web_page_preview=True)
+
 
 async def main():
     Thread(target=run_server, daemon=True).start()
