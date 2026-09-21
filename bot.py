@@ -65,7 +65,19 @@ def handle_webhook():
                     db.commit()
                     
     return "EVENT_RECEIVED", 200
-
+# --- NEW: MAKE.COM BRIDGE WEBHOOK ---
+@app.route('/make_webhook', methods=['POST'])
+def make_webhook():
+    data = request.json
+    ig_account_id = str(data.get("ig_account_id"))
+    username = str(data.get("username"))
+    
+    if ig_account_id and username:
+        # We save the username directly into the sender_id column
+        db.execute("INSERT INTO ig_tags (ig_account_id, sender_id) VALUES (?, ?)", (ig_account_id, username))
+        db.commit()
+        
+    return "OK", 200
 def run_server():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
@@ -292,7 +304,7 @@ async def get_top_tagger(message: types.Message):
     
     # 3. Use the Graph API to convert the User ID into a readable Username
     user_res = requests.get(f"{BASE_URL}/{sender_id}?fields=username&access_token={creds[0]}").json()
-    username = user_res.get('username', 'Unknown User')
+    username = user_res.get('username', sender_id)
     
     profile_url = f"https://www.instagram.com/{username}/"
     await message.reply(f"🏆 أكثر شخص أشار إليك (منذ تفعيل البوت): <a href='{profile_url}'>@{username}</a> ({count} إشارات)", parse_mode="HTML", disable_web_page_preview=True)
