@@ -16,7 +16,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 # This is the secret password Meta will use to verify your webhook
 WEBHOOK_VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "my_secure_token_123")
 
-API_VER = "v19.0"
+API_VER = "v26.0"
 BASE_URL = f"https://graph.facebook.com/{API_VER}"
 
 # --- DATABASE SETUP ---
