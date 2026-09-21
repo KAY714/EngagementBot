@@ -4,7 +4,7 @@ import asyncio
 import sqlite3
 from datetime import datetime, timedelta
 from collections import Counter
-from flask import Flask
+from flask import Flask, request
 from threading import Thread
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -13,6 +13,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- ENVIRONMENT VARIABLES ---
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+# This is the secret password Meta will use to verify your webhook
+WEBHOOK_VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "my_secure_token_123")
 
 API_VER = "v19.0"
 BASE_URL = f"https://graph.facebook.com/{API_VER}"
@@ -20,13 +22,49 @@ BASE_URL = f"https://graph.facebook.com/{API_VER}"
 # --- DATABASE SETUP ---
 db = sqlite3.connect("bot_users.db", check_same_thread=False)
 db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, meta_token TEXT, page_id TEXT)")
+# NEW: Table to store live Instagram Story tags
+db.execute("CREATE TABLE IF NOT EXISTS ig_tags (id INTEGER PRIMARY KEY AUTOINCREMENT, ig_account_id TEXT, sender_id TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)")
 db.commit()
 
-# --- DUMMY SERVER (KEEPS HOST AWAKE) ---
+# --- WEBHOOK & SERVER (FLASK) ---
 app = Flask(__name__)
+
 @app.route('/')
 def home():
     return "Bot is awake!"
+
+# NEW: Meta Webhook Verification Route
+@app.route('/webhook', methods=['GET'])
+def verify_webhook():
+    mode = request.args.get('hub.mode')
+    token = request.args.get('hub.verify_token')
+    challenge = request.args.get('hub.challenge')
+    
+    if mode and token:
+        if mode == 'subscribe' and token == WEBHOOK_VERIFY_TOKEN:
+            return challenge, 200
+        else:
+            return "Forbidden", 403
+    return "OK", 200
+
+# NEW: Meta Webhook Event Receiver (Saves Tags to Database)
+@app.route('/webhook', methods=['POST'])
+def handle_webhook():
+    data = request.json
+    if data and data.get("object") == "instagram":
+        for entry in data.get("entry", []):
+            ig_account_id = entry.get("id")
+            
+            # Instagram sends tags/mentions as messaging events
+            for messaging_event in entry.get("messaging", []):
+                sender_id = messaging_event.get("sender", {}).get("id")
+                
+                # If someone tagged this IG account, save their ID to the database!
+                if sender_id and ig_account_id:
+                    db.execute("INSERT INTO ig_tags (ig_account_id, sender_id) VALUES (?, ?)", (ig_account_id, sender_id))
+                    db.commit()
+                    
+    return "EVENT_RECEIVED", 200
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -75,7 +113,6 @@ def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
     top_user_id, count = Counter(interactions).most_common(1)[0]
     top_name = user_names.get(top_user_id, "مستخدم غير معروف")
     
-    # Facebook profile links don't work due to Meta Privacy, so we format the name in Bold instead.
     return f"🏆 أكثر متفاعل على فيسبوك: <b>{top_name}</b> ({count} تفاعلات)"
 
 def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
@@ -109,7 +146,6 @@ def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
     profile_url = f"https://www.instagram.com/{top_username}/"
     return f"🏆 أكثر متفاعل على إنستغرام: <a href='{profile_url}'>@{top_username}</a> ({count} تعليقات)"
 
-# --- HELPER LOGIC FOR DATES ---
 def parse_dates(args):
     since, until = None, None
     if args == "week":
@@ -120,12 +156,10 @@ def parse_dates(args):
         until = parts[1]
     return since, until
 
-
 # --- TELEGRAM COMMANDS & MENUS ---
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
-    # Step 1: Ask for device type
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="📱 هاتف", callback_data="show_usage"),
@@ -134,10 +168,8 @@ async def start_cmd(message: types.Message):
     ])
     await message.reply("👋 <b>مرحباً بك في بوت المتفاعلين!</b>\n\nلتقديم أفضل تجربة لك، ما هو الجهاز الذي تستخدمه حالياً؟", reply_markup=keyboard, parse_mode="HTML")
 
-
 @dp.callback_query(F.data == "show_usage")
 async def show_usage_menu(callback: types.CallbackQuery):
-    # Step 2: Show the commands usage
     usage_text = (
         "✅ <b>ممتاز! إليك طريقة استخدام البوت:</b>\n\n"
         "⚙️ <b>1. أوامر الإعداد (مطلوبة أولاً):</b>\n"
@@ -145,7 +177,8 @@ async def show_usage_menu(callback: types.CallbackQuery):
         "• <code>/setpage YOUR_PAGE_ID</code> : لربط معرف صفحة فيسبوك الخاصة بك.\n\n"
         "📊 <b>2. أوامر التحليلات:</b>\n"
         "• <code>/topfb</code> : لاستخراج أكثر متفاعل على فيسبوك.\n"
-        "• <code>/topig</code> : لاستخراج أكثر متفاعل على إنستغرام.\n\n"
+        "• <code>/topig</code> : لاستخراج أكثر معلق على إنستغرام.\n"
+        "• <code>/toptagger</code> : لمعرفة أكثر شخص أشار إليك (منذ تشغيل البوت).\n\n"
         "📅 <b>3. عوامل تصفية التواريخ المتقدمة (اختياري):</b>\n"
         "• <code>/topfb week</code> : الأنشط في الأيام الـ 7 الماضية.\n"
         "• <code>/topig 2026-09-03 2026-09-08</code> : الأنشط بين تواريخ محددة."
@@ -155,14 +188,11 @@ async def show_usage_menu(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="📖 شرح كيفية الحصول على Token و Page ID", callback_data="show_tutorial")]
     ])
     
-    # Edit the message to replace the device selection with usage instructions
     await callback.message.edit_text(usage_text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
-
 @dp.callback_query(F.data == "show_tutorial")
 async def show_tutorial_menu(callback: types.CallbackQuery):
-    # Step 3: Show the step-by-step tutorial
     tutorial_text = (
         "<b>📖 شرح كيفية الحصول على Token و Page ID:</b>\n\n"
         "1️⃣ اذهب إلى موقع <a href='https://developers.facebook.com/tools/explorer/'>مستكشف Meta Graph API</a>.\n"
@@ -187,7 +217,6 @@ async def show_tutorial_menu(callback: types.CallbackQuery):
     
     await callback.message.edit_text(tutorial_text, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer()
-
 
 @dp.message(Command("settoken"))
 async def set_token(message: types.Message, command: CommandObject):
@@ -234,6 +263,39 @@ async def get_top_ig(message: types.Message, command: CommandObject):
     result = fetch_ig_top_user(creds[0], creds[1], since, until)
     
     await message.reply(result, parse_mode="HTML", disable_web_page_preview=True)
+
+# NEW: Fetch the Top Tagger from the Webhook Database
+@dp.message(Command("toptagger"))
+async def get_top_tagger(message: types.Message):
+    creds = get_user_creds(message.from_user.id)
+    if not creds or not creds[0] or not creds[1]:
+        return await message.reply("⚠️ الرجاء استخدام الأمر <code>/settoken</code> والأمر <code>/setpage</code> أولاً لربط حسابك!", parse_mode="HTML")
+        
+    await message.reply("جاري البحث في قاعدة البيانات...")
+    
+    # 1. Fetch the IG Account ID using the provided Facebook Page ID
+    ig_res = requests.get(f"{BASE_URL}/{creds[1]}?fields=instagram_business_account{{id}}&access_token={creds[0]}").json()
+    if 'instagram_business_account' not in ig_res:
+        return await message.reply("❌ خطأ: لا يوجد حساب إنستغرام أعمال مرتبط بصفحة الفيسبوك هذه.")
+        
+    ig_account_id = ig_res['instagram_business_account']['id']
+    
+    # 2. Query the SQLite Database for this specific IG Account
+    cursor = db.execute("SELECT sender_id, COUNT(*) as count FROM ig_tags WHERE ig_account_id=? GROUP BY sender_id ORDER BY count DESC LIMIT 1", (ig_account_id,))
+    top_tagger = cursor.fetchone()
+    
+    if not top_tagger:
+        return await message.reply("❌ لم يتم العثور على أي إشارات (Tags) جديدة منذ تفعيل النظام.")
+        
+    sender_id = top_tagger[0]
+    count = top_tagger[1]
+    
+    # 3. Use the Graph API to convert the User ID into a readable Username
+    user_res = requests.get(f"{BASE_URL}/{sender_id}?fields=username&access_token={creds[0]}").json()
+    username = user_res.get('username', 'Unknown User')
+    
+    profile_url = f"https://www.instagram.com/{username}/"
+    await message.reply(f"🏆 أكثر شخص أشار إليك (منذ تفعيل البوت): <a href='{profile_url}'>@{username}</a> ({count} إشارات)", parse_mode="HTML", disable_web_page_preview=True)
 
 
 async def main():
