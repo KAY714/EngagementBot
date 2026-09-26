@@ -153,13 +153,23 @@ async def show_usage_menu(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "show_tutorial")
 async def show_tutorial_menu(callback: types.CallbackQuery):
     tutorial_text = (
-        "<b>📖 شرح كيفية الحصول على Token و Page ID:</b>\n\n"
-        "1️⃣ اذهب إلى <a href='https://developers.facebook.com/tools/explorer/'>مستكشف Meta Graph API</a>.\n"
-        "2️⃣ في خانة <b>Meta App</b> اختر تطبيقك.\n"
-        "3️⃣ في خانة <b>User or Page</b>، اختر <b>Get Page Access Token</b> وسجل دخولك.\n"
-        "4️⃣ انسخ الرمز الطويل (هذا هو <code>META_TOKEN</code>).\n"
-        "5️⃣ معرف الصفحة بجواره هو (<code>PAGE_ID</code>).\n\n"
-        "🔙 <i>بعد الانتهاء، استخدم <code>/settoken</code> و <code>/setpage</code> في البوت.</i>"
+        "<b>📖 شرح مفصل لربط صفحتك بالبوت:</b>\n\n"
+        "<b>📍 أولاً: الحصول على Page ID (معرف الصفحة)</b>\n"
+        "1️⃣ اذهب إلى صفحتك على فيسبوك من المتصفح.\n"
+        "2️⃣ ادخل إلى قسم <b>حول (About)</b> ثم <b>شفافية الصفحة (Page Transparency)</b>.\n"
+        "3️⃣ ستجد رقم <b>معرف الصفحة (Page ID)</b>. انسخه واستخدم هذا الأمر:\n"
+        "👉 <code>/setpage هنا_تضع_الرقم</code>\n\n"
+        "<b>📍 ثانياً: الحصول على Meta Token (رمز الوصول)</b>\n"
+        "1️⃣ اذهب مباشرة إلى أداة المطورين: <a href='https://developers.facebook.com/tools/explorer/'>مستكشف Meta Graph API</a>.\n"
+        "2️⃣ في القائمة الجانبية (User or Page)، انقر واختر <b>Get Page Access Token</b>.\n"
+        "3️⃣ سجل الدخول، وافق على الأذونات، وحدد صفحتك.\n"
+        "4️⃣ في خانة (Permissions)، تأكد من إضافة هذه الصلاحيات ليتمكن البوت من قراءة التعليقات:\n"
+        "▫️ <code>pages_read_engagement</code>\n"
+        "▫️ <code>pages_read_user_content</code>\n"
+        "▫️ <code>instagram_basic</code>\n"
+        "5️⃣ انقر على الزر الأزرق <b>Generate Access Token</b>.\n"
+        "6️⃣ انسخ الرمز الطويل جداً الذي ظهر لك واستخدم هذا الأمر في البوت:\n"
+        "👉 <code>/settoken هنا_تضع_الرمز</code>"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 العودة للقائمة السابقة", callback_data="show_usage")]
