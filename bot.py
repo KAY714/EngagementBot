@@ -4,7 +4,7 @@ import asyncio
 import sqlite3
 from datetime import datetime, timedelta
 from collections import Counter
-from flask import Flask, request
+from flask import Flask
 from threading import Thread
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -20,29 +20,14 @@ BASE_URL = f"https://graph.facebook.com/{API_VER}"
 # --- DATABASE SETUP ---
 db = sqlite3.connect("bot_users.db", check_same_thread=False)
 db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, meta_token TEXT, page_id TEXT)")
-db.execute("CREATE TABLE IF NOT EXISTS ig_tags (id INTEGER PRIMARY KEY AUTOINCREMENT, ig_account_id TEXT, sender_id TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)")
 db.commit()
 
-# --- WEBHOOK & SERVER (FLASK) ---
+# --- DUMMY SERVER (KEEPS HOST AWAKE) ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Bot is awake!"
-
-# --- NEW: MAKE.COM BRIDGE WEBHOOK ---
-@app.route('/make_webhook', methods=['POST'])
-def make_webhook():
-    data = request.json
-    ig_account_id = str(data.get("ig_account_id"))
-    username = str(data.get("username"))
-    
-    if ig_account_id and username:
-        # We save the username directly from Make.com into the database!
-        db.execute("INSERT INTO ig_tags (ig_account_id, sender_id) VALUES (?, ?)", (ig_account_id, username))
-        db.commit()
-        
-    return "OK", 200
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -91,6 +76,7 @@ def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
     top_name = user_names.get(top_user_id, "مستخدم غير معروف")
     return f"🏆 أكثر متفاعل على فيسبوك: <b>{top_name}</b> ({count} تفاعلات)"
 
+
 def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
     ig_res = requests.get(f"{BASE_URL}/{page_id}?fields=instagram_business_account{{id,username}}&access_token={meta_token}").json()
     if 'error' in ig_res: return f"❌ خطأ في API: {ig_res['error'].get('message')}"
@@ -121,6 +107,7 @@ def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
     top_username, count = Counter(interactions).most_common(1)[0]
     profile_url = f"https://www.instagram.com/{top_username}/"
     return f"🏆 أكثر متفاعل على إنستغرام: <a href='{profile_url}'>@{top_username}</a> ({count} تعليقات)"
+
 
 def parse_dates(args):
     since, until = None, None
@@ -153,8 +140,7 @@ async def show_usage_menu(callback: types.CallbackQuery):
         "• <code>/setpage YOUR_PAGE_ID</code> : لربط معرف صفحة فيسبوك الخاصة بك.\n\n"
         "📊 <b>2. أوامر التحليلات:</b>\n"
         "• <code>/topfb</code> : لاستخراج أكثر متفاعل على فيسبوك.\n"
-        "• <code>/topig</code> : لاستخراج أكثر معلق على إنستغرام.\n"
-        "• <code>/toptagger</code> : لمعرفة أكثر شخص أشار إليك (منذ تشغيل البوت).\n\n"
+        "• <code>/topig</code> : لاستخراج أكثر معلق على إنستغرام.\n\n"
         "📅 <b>3. عوامل تصفية التواريخ المتقدمة (اختياري):</b>\n"
         "• <code>/topfb week</code> : الأنشط في الأيام الـ 7 الماضية."
     )
@@ -214,30 +200,6 @@ async def get_top_ig(message: types.Message, command: CommandObject):
     since, until = parse_dates(command.args)
     await message.reply("جاري جلب بيانات إنستغرام...")
     await message.reply(fetch_ig_top_user(creds[0], creds[1], since, until), parse_mode="HTML", disable_web_page_preview=True)
-
-@dp.message(Command("toptagger"))
-async def get_top_tagger(message: types.Message):
-    creds = get_user_creds(message.from_user.id)
-    if not creds or not creds[0] or not creds[1]: return await message.reply("⚠️ استخدم /settoken و /setpage أولاً!")
-        
-    await message.reply("جاري البحث في قاعدة البيانات عن الإشارات (Tags)...")
-    
-    ig_res = requests.get(f"{BASE_URL}/{creds[1]}?fields=instagram_business_account{{id}}&access_token={creds[0]}").json()
-    if 'instagram_business_account' not in ig_res: return await message.reply("❌ لا يوجد حساب إنستغرام مرتبط.")
-        
-    ig_account_id = ig_res['instagram_business_account']['id']
-    
-    # Because Make.com sends us the Username directly, we don't need a Facebook API call to translate it anymore!
-    cursor = db.execute("SELECT sender_id, COUNT(*) as count FROM ig_tags WHERE ig_account_id=? GROUP BY sender_id ORDER BY count DESC LIMIT 1", (ig_account_id,))
-    top_tagger = cursor.fetchone()
-    
-    if not top_tagger: return await message.reply("❌ لم يتم العثور على أي إشارات (Tags) جديدة منذ تفعيل النظام.")
-        
-    username = top_tagger[0]
-    count = top_tagger[1]
-    
-    profile_url = f"https://www.instagram.com/{username}/"
-    await message.reply(f"🏆 أكثر شخص أشار إليك (منذ تفعيل البوت): <a href='{profile_url}'>@{username}</a> ({count} إشارات)", parse_mode="HTML", disable_web_page_preview=True)
 
 
 async def main():
