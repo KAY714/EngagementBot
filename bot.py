@@ -3,6 +3,7 @@ import requests
 import asyncio
 import sqlite3
 from datetime import datetime, timedelta
+from collections import Counter
 from flask import Flask
 from threading import Thread
 from aiogram import Bot, Dispatcher, types, F
@@ -38,27 +39,37 @@ dp = Dispatcher()
 
 def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
 
-    # 👉 PASTE YOUR PIPEDREAM ENDPOINT URL HERE:
+    # 👉 YOUR PIPEDREAM ENDPOINT URL:
     PIPEDREAM_URL = "https://eorp3shvzsg7mf2.m.pipedream.net"
     
     user_stats = {}
-    page_id = "109794050764942" # Your Al-Fakhama Jewelry Page ID
     
     try:
-        # We ask Pipedream to fetch the data using their Verified Live App!
-        res = requests.get(PIPEDREAM_URL).json()
+        # Ask Pipedream for the data
+        response = requests.get(PIPEDREAM_URL, timeout=20)
+        
+        # We try to convert Pipedream's response to JSON
+        try:
+            res = response.json()
+        except Exception:
+            # If Pipedream returns empty text or HTML instead of JSON, print it so we can debug!
+            return f"❌ خطأ في إعداد Pipedream. الرد كان:\n<code>{response.text[:200]}</code>"
+            
     except Exception as e:
-        return "❌ فشل في الاتصال بـ Pipedream."
+        return f"❌ فشل في الاتصال بـ Pipedream: {str(e)}"
+
+    # Catch Facebook API errors sent through Pipedream
+    if 'error' in res:
+        return f"❌ خطأ من فيسبوك داخل Pipedream: {res['error'].get('message')}"
 
     posts = res.get('data', [])
-    if not posts: return "❌ لم يتم العثور على أي تفاعلات عامة."
+    if not posts: return "❌ لم يتم العثور على أي تفاعلات عامة (أو الصفحة فارغة)."
     
     for post in posts:
-        post_id = post['id']
         
-        # 1. Tally Comments
-        comments_res = requests.get(f"{BASE_URL}/{post_id}/comments?limit=100&access_token={meta_token}").json()
-        for c in comments_res.get('data', []):
+        # 1. Tally Comments (Already inside the Pipedream response!)
+        comments = post.get('comments', {}).get('data', [])
+        for c in comments:
             if 'from' in c:
                 user_id = str(c['from'].get('id'))
                 name = c['from'].get('name', 'مستخدم غير معروف')
@@ -68,18 +79,17 @@ def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
                     user_stats[user_id]['comments'] += 1
                     user_stats[user_id]['total'] += 1
         
-        # 2. Tally Reactions (Must request 'type' to separate Likes from other reactions)
-        reactions_res = requests.get(f"{BASE_URL}/{post_id}/reactions?fields=id,name,type&limit=100&access_token={meta_token}").json()
-        for r in reactions_res.get('data', []):
+        # 2. Tally Reactions (Already inside the Pipedream response!)
+        reactions = post.get('reactions', {}).get('data', [])
+        for r in reactions:
             user_id = str(r.get('id'))
             name = r.get('name', 'مستخدم غير معروف')
-            rtype = r.get('type', 'LIKE') # Default to LIKE
+            rtype = r.get('type', 'LIKE') 
             
             if user_id != str(page_id): 
                 if user_id not in user_stats:
                     user_stats[user_id] = {'name': name, 'comments': 0, 'likes': 0, 'reactions': 0, 'total': 0}
                 
-                # Check if it's a simple Like or another reaction (Love, Haha, Wow, Sad, Angry)
                 if rtype == 'LIKE':
                     user_stats[user_id]['likes'] += 1
                 else:
@@ -93,7 +103,6 @@ def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
     top_user_id = max(user_stats, key=lambda x: user_stats[x]['total'])
     top_user = user_stats[top_user_id]
     
-    # Return the beautiful detailed breakdown!
     return (f"🏆 أكثر متفاعل على فيسبوك: <b>{top_user['name']}</b>\n\n"
             f"📈 <b>إجمالي التفاعلات:</b> {top_user['total']}\n"
             f"👍 <b>الإعجابات (Likes):</b> {top_user['likes']}\n"
@@ -128,8 +137,6 @@ def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
             
     if not interactions: return "لم يتم العثور على أي تعليقات حديثة على إنستغرام."
     
-    # Determine the top commenter
-    from collections import Counter
     top_username, count = Counter(interactions).most_common(1)[0]
     profile_url = f"https://www.instagram.com/{top_username}/"
     return f"🏆 أكثر متفاعل على إنستغرام: <a href='{profile_url}'>@{top_username}</a> ({count} تعليقات)"
@@ -229,9 +236,8 @@ async def get_top_fb(message: types.Message, command: CommandObject):
     creds = get_user_creds(message.from_user.id)
     if not creds or not creds[0] or not creds[1]: return await message.reply("⚠️ استخدم /settoken و /setpage أولاً!")
     since, until = parse_dates(command.args)
-    await message.reply("جاري جلب بيانات فيسبوك...")
+    await message.reply("جاري جلب بيانات فيسبوك... 🔍")
     
-    # We call the fetch function. Since it returns HTML formatting, we set parse_mode to HTML.
     await message.reply(fetch_fb_top_user(creds[0], creds[1], since, until), parse_mode="HTML", disable_web_page_preview=True)
     
 @dp.message(Command("topig"))
@@ -239,9 +245,8 @@ async def get_top_ig(message: types.Message, command: CommandObject):
     creds = get_user_creds(message.from_user.id)
     if not creds or not creds[0] or not creds[1]: return await message.reply("⚠️ استخدم /settoken و /setpage أولاً!")
     since, until = parse_dates(command.args)
-    await message.reply("جاري جلب بيانات إنستغرام...")
+    await message.reply("جاري جلب بيانات إنستغرام... 🔍")
     await message.reply(fetch_ig_top_user(creds[0], creds[1], since, until), parse_mode="HTML", disable_web_page_preview=True)
-
 
 @dp.message(Command("mypage"))
 async def check_my_page(message: types.Message):
@@ -252,29 +257,23 @@ async def check_my_page(message: types.Message):
     meta_token, page_id = creds[0], creds[1]
     await message.reply("جاري فحص الاتصال بفيسبوك... 🔍")
     
-    # 1. Ask Facebook for the Page Name
     fb_res = requests.get(f"{BASE_URL}/{page_id}?access_token={meta_token}").json()
-    
-    if 'error' in fb_res:
-        return await message.reply(f"❌ خطأ في الاتصال: {fb_res['error'].get('message')}")
+    if 'error' in fb_res: return await message.reply(f"❌ خطأ في الاتصال: {fb_res['error'].get('message')}")
     
     page_name = fb_res.get('name', 'اسم غير معروف')
     
-    # 2. Ask Facebook for the linked Instagram Account
     ig_res = requests.get(f"{BASE_URL}/{page_id}?fields=instagram_business_account{{username}}&access_token={meta_token}").json()
     ig_username = "غير متصل ❌"
     
     if 'instagram_business_account' in ig_res:
         ig_username = f"@{ig_res['instagram_business_account'].get('username', 'Unknown')} ✅"
         
-    # 3. Send the result
     info_text = (
         f"📊 <b>معلومات الحساب المرتبط:</b>\n\n"
         f"📘 <b>صفحة فيسبوك:</b> {page_name}\n"
         f"🆔 <b>معرف الصفحة:</b> <code>{page_id}</code>\n"
         f"📸 <b>إنستغرام:</b> {ig_username}"
     )
-    
     await message.reply(info_text, parse_mode="HTML")
 
 async def main():
