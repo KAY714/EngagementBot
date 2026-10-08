@@ -37,18 +37,21 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
-    # Dictionary to track detailed stats per user
-    user_stats = {}
+
+    # 👉 PASTE YOUR PIPEDREAM ENDPOINT URL HERE:
+    PIPEDREAM_URL = "https://eorp3shvzsg7mf2.m.pipedream.net"
     
-    url = f"{BASE_URL}/{page_id}/posts?limit=100&access_token={meta_token}"
-    if since: url += f"&since={since}"
-    if until: url += f"&until={until}"
-        
-    res = requests.get(url).json()
-    if 'error' in res: return f"❌ خطأ في فيسبوك API: {res['error'].get('message')}"
-        
+    user_stats = {}
+    page_id = "109794050764942" # Your Al-Fakhama Jewelry Page ID
+    
+    try:
+        # We ask Pipedream to fetch the data using their Verified Live App!
+        res = requests.get(PIPEDREAM_URL).json()
+    except Exception as e:
+        return "❌ فشل في الاتصال بـ Pipedream."
+
     posts = res.get('data', [])
-    if not posts: return "❌ لم يتم العثور على أي منشورات في هذه الفترة الزمنية."
+    if not posts: return "❌ لم يتم العثور على أي تفاعلات عامة."
     
     for post in posts:
         post_id = post['id']
