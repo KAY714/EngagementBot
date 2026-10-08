@@ -1,7 +1,6 @@
 import os
 import requests
 import asyncio
-import json
 import sqlite3
 from datetime import datetime, timedelta
 from collections import Counter
@@ -39,77 +38,67 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
-    # 👉 YOUR PIPEDREAM ENDPOINT URL:
-    PIPEDREAM_URL = "https://eorp3shvzsg7mf2.m.pipedream.net"
-    
     user_stats = {}
-    page_id = "109794050764942" # Your Al-Fakhama Jewelry Page ID
     
+    # 🚀 THE MAGIC 1-REQUEST URL: Fetches 50 posts + 100 comments + 100 reactions instantly!
+    url = f"{BASE_URL}/{page_id}/posts?fields=comments.limit(100){{from}},reactions.limit(100){{id,name,type}}&limit=50&access_token={meta_token}"
+    
+    if since: url += f"&since={since}"
+    if until: url += f"&until={until}"
+        
     try:
-        # Increase timeout to 45 seconds because fetching thousands of comments takes Meta some time!
-        response = requests.get(PIPEDREAM_URL, timeout=45)
+        res = requests.get(url, timeout=20).json()
+    except Exception as e:
+        return f"❌ فشل في الاتصال بفيسبوك: {str(e)}"
         
-        try:
-            res = response.json()
-            # If Pipedream sent it as a string instead of a dictionary, we convert it here! (This fixes the silent crash)
-            if isinstance(res, str):
-                res = json.loads(res)
-        except Exception as e:
-            return f"❌ خطأ في قراءة رد Pipedream. الرد كان:\n<code>{response.text[:200]}</code>\nالخطأ: {str(e)}"
-            
-        # Catch Facebook API errors
-        if 'error' in res:
-            return f"❌ خطأ من فيسبوك داخل Pipedream: {res['error'].get('message')}"
-
-        posts = res.get('data', [])
-        if not posts: return "❌ لم يتم العثور على أي تفاعلات عامة."
+    if 'error' in res:
+        return f"❌ خطأ في فيسبوك API: {res['error'].get('message')}"
         
-        for post in posts:
-            # 1. Tally Comments 
-            comments = post.get('comments', {}).get('data', [])
-            for c in comments:
-                if 'from' in c:
-                    user_id = str(c['from'].get('id'))
-                    name = c['from'].get('name', 'مستخدم غير معروف')
-                    if user_id != str(page_id): 
-                        if user_id not in user_stats:
-                            user_stats[user_id] = {'name': name, 'comments': 0, 'likes': 0, 'reactions': 0, 'total': 0}
-                        user_stats[user_id]['comments'] += 1
-                        user_stats[user_id]['total'] += 1
-            
-            # 2. Tally Reactions 
-            reactions = post.get('reactions', {}).get('data', [])
-            for r in reactions:
-                user_id = str(r.get('id'))
-                name = r.get('name', 'مستخدم غير معروف')
-                rtype = r.get('type', 'LIKE') 
-                
+    posts = res.get('data', [])
+    if not posts: return "❌ لم يتم العثور على أي تفاعلات عامة."
+    
+    for post in posts:
+        # 1. Tally Comments
+        comments = post.get('comments', {}).get('data', [])
+        for c in comments:
+            if 'from' in c:
+                user_id = str(c['from'].get('id'))
+                name = c['from'].get('name', 'مستخدم غير معروف')
                 if user_id != str(page_id): 
                     if user_id not in user_stats:
                         user_stats[user_id] = {'name': name, 'comments': 0, 'likes': 0, 'reactions': 0, 'total': 0}
-                    
-                    if rtype == 'LIKE':
-                        user_stats[user_id]['likes'] += 1
-                    else:
-                        user_stats[user_id]['reactions'] += 1
-                        
+                    user_stats[user_id]['comments'] += 1
                     user_stats[user_id]['total'] += 1
-
-        if not user_stats: return "لم يتم العثور على أي تفاعل حديث على فيسبوك."
         
-        # Get the ID of the winner based on the highest 'total'
-        top_user_id = max(user_stats, key=lambda x: user_stats[x]['total'])
-        top_user = user_stats[top_user_id]
-        
-        return (f"🏆 أكثر متفاعل على فيسبوك: <b>{top_user['name']}</b>\n\n"
-                f"📈 <b>إجمالي التفاعلات:</b> {top_user['total']}\n"
-                f"👍 <b>الإعجابات (Likes):</b> {top_user['likes']}\n"
-                f"❤️ <b>تفاعلات أخرى (Reactions):</b> {top_user['reactions']}\n"
-                f"💬 <b>التعليقات (Comments):</b> {top_user['comments']}")
+        # 2. Tally Reactions
+        reactions = post.get('reactions', {}).get('data', [])
+        for r in reactions:
+            user_id = str(r.get('id'))
+            name = r.get('name', 'مستخدم غير معروف')
+            rtype = r.get('type', 'LIKE') 
+            
+            if user_id != str(page_id): 
+                if user_id not in user_stats:
+                    user_stats[user_id] = {'name': name, 'comments': 0, 'likes': 0, 'reactions': 0, 'total': 0}
+                
+                if rtype == 'LIKE':
+                    user_stats[user_id]['likes'] += 1
+                else:
+                    user_stats[user_id]['reactions'] += 1
+                    
+                user_stats[user_id]['total'] += 1
 
-    except Exception as e:
-        # THIS CATCHES ANY OTHER SILENT CRASHES!
-        return f"❌ حدث خطأ داخلي في البوت:\n<code>{str(e)}</code>"
+    if not user_stats: return "لم يتم العثور على أي تفاعل حديث على فيسبوك."
+    
+    # Get the ID of the winner based on the highest 'total'
+    top_user_id = max(user_stats, key=lambda x: user_stats[x]['total'])
+    top_user = user_stats[top_user_id]
+    
+    return (f"🏆 أكثر متفاعل على فيسبوك: <b>{top_user['name']}</b>\n\n"
+            f"📈 <b>إجمالي التفاعلات:</b> {top_user['total']}\n"
+            f"👍 <b>الإعجابات (Likes):</b> {top_user['likes']}\n"
+            f"❤️ <b>تفاعلات أخرى (Reactions):</b> {top_user['reactions']}\n"
+            f"💬 <b>التعليقات (Comments):</b> {top_user['comments']}")
 
 def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
     ig_res = requests.get(f"{BASE_URL}/{page_id}?fields=instagram_business_account{{id,username}}&access_token={meta_token}").json()
@@ -239,7 +228,10 @@ async def get_top_fb(message: types.Message, command: CommandObject):
     since, until = parse_dates(command.args)
     await message.reply("جاري جلب بيانات فيسبوك... 🔍")
     
-    await message.reply(fetch_fb_top_user(creds[0], creds[1], since, until), parse_mode="HTML", disable_web_page_preview=True)
+    # 🚀 FIX: Run the heavy fetching function in the background so the bot NEVER freezes!
+    result = await asyncio.to_thread(fetch_fb_top_user, creds[0], creds[1], since, until)
+    
+    await message.reply(result, parse_mode="HTML", disable_web_page_preview=True)
     
 @dp.message(Command("topig"))
 async def get_top_ig(message: types.Message, command: CommandObject):
@@ -247,7 +239,11 @@ async def get_top_ig(message: types.Message, command: CommandObject):
     if not creds or not creds[0] or not creds[1]: return await message.reply("⚠️ استخدم /settoken و /setpage أولاً!")
     since, until = parse_dates(command.args)
     await message.reply("جاري جلب بيانات إنستغرام... 🔍")
-    await message.reply(fetch_ig_top_user(creds[0], creds[1], since, until), parse_mode="HTML", disable_web_page_preview=True)
+    
+    # 🚀 FIX: Run Instagram in the background too!
+    result = await asyncio.to_thread(fetch_ig_top_user, creds[0], creds[1], since, until)
+    
+    await message.reply(result, parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(Command("mypage"))
 async def check_my_page(message: types.Message):
