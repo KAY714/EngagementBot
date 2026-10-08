@@ -3,7 +3,6 @@ import requests
 import asyncio
 import sqlite3
 from datetime import datetime, timedelta
-from collections import Counter
 from flask import Flask
 from threading import Thread
 from aiogram import Bot, Dispatcher, types, F
@@ -38,8 +37,8 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
-    interactions = []
-    user_names = {} 
+    # Dictionary to track detailed stats per user
+    user_stats = {}
     
     url = f"{BASE_URL}/{page_id}/posts?limit=100&access_token={meta_token}"
     if since: url += f"&since={since}"
@@ -53,28 +52,50 @@ def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
     
     for post in posts:
         post_id = post['id']
+        
+        # 1. Tally Comments
         comments_res = requests.get(f"{BASE_URL}/{post_id}/comments?limit=100&access_token={meta_token}").json()
         for c in comments_res.get('data', []):
             if 'from' in c:
                 user_id = str(c['from'].get('id'))
                 name = c['from'].get('name', 'مستخدم غير معروف')
                 if user_id != str(page_id): 
-                    interactions.append(user_id)
-                    user_names[user_id] = name
+                    if user_id not in user_stats:
+                        user_stats[user_id] = {'name': name, 'comments': 0, 'likes': 0, 'reactions': 0, 'total': 0}
+                    user_stats[user_id]['comments'] += 1
+                    user_stats[user_id]['total'] += 1
         
-        reactions_res = requests.get(f"{BASE_URL}/{post_id}/reactions?limit=100&access_token={meta_token}").json()
+        # 2. Tally Reactions (Must request 'type' to separate Likes from other reactions)
+        reactions_res = requests.get(f"{BASE_URL}/{post_id}/reactions?fields=id,name,type&limit=100&access_token={meta_token}").json()
         for r in reactions_res.get('data', []):
             user_id = str(r.get('id'))
             name = r.get('name', 'مستخدم غير معروف')
+            rtype = r.get('type', 'LIKE') # Default to LIKE
+            
             if user_id != str(page_id): 
-                interactions.append(user_id)
-                user_names[user_id] = name
+                if user_id not in user_stats:
+                    user_stats[user_id] = {'name': name, 'comments': 0, 'likes': 0, 'reactions': 0, 'total': 0}
+                
+                # Check if it's a simple Like or another reaction (Love, Haha, Wow, Sad, Angry)
+                if rtype == 'LIKE':
+                    user_stats[user_id]['likes'] += 1
+                else:
+                    user_stats[user_id]['reactions'] += 1
+                    
+                user_stats[user_id]['total'] += 1
 
-    if not interactions: return "لم يتم العثور على أي تفاعل حديث على فيسبوك."
+    if not user_stats: return "لم يتم العثور على أي تفاعل حديث على فيسبوك."
     
-    top_user_id, count = Counter(interactions).most_common(1)[0]
-    top_name = user_names.get(top_user_id, "مستخدم غير معروف")
-    return f"🏆 أكثر متفاعل على فيسبوك: <b>{top_name}</b> ({count} تفاعلات)"
+    # Get the ID of the winner based on the highest 'total'
+    top_user_id = max(user_stats, key=lambda x: user_stats[x]['total'])
+    top_user = user_stats[top_user_id]
+    
+    # Return the beautiful detailed breakdown!
+    return (f"🏆 أكثر متفاعل على فيسبوك: <b>{top_user['name']}</b>\n\n"
+            f"📈 <b>إجمالي التفاعلات:</b> {top_user['total']}\n"
+            f"👍 <b>الإعجابات (Likes):</b> {top_user['likes']}\n"
+            f"❤️ <b>تفاعلات أخرى (Reactions):</b> {top_user['reactions']}\n"
+            f"💬 <b>التعليقات (Comments):</b> {top_user['comments']}")
 
 
 def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
@@ -104,6 +125,8 @@ def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
             
     if not interactions: return "لم يتم العثور على أي تعليقات حديثة على إنستغرام."
     
+    # Determine the top commenter
+    from collections import Counter
     top_username, count = Counter(interactions).most_common(1)[0]
     profile_url = f"https://www.instagram.com/{top_username}/"
     return f"🏆 أكثر متفاعل على إنستغرام: <a href='{profile_url}'>@{top_username}</a> ({count} تعليقات)"
@@ -204,6 +227,8 @@ async def get_top_fb(message: types.Message, command: CommandObject):
     if not creds or not creds[0] or not creds[1]: return await message.reply("⚠️ استخدم /settoken و /setpage أولاً!")
     since, until = parse_dates(command.args)
     await message.reply("جاري جلب بيانات فيسبوك...")
+    
+    # We call the fetch function. Since it returns HTML formatting, we set parse_mode to HTML.
     await message.reply(fetch_fb_top_user(creds[0], creds[1], since, until), parse_mode="HTML", disable_web_page_preview=True)
     
 @dp.message(Command("topig"))
