@@ -1,6 +1,7 @@
 import os
 import requests
 import asyncio
+import json
 import sqlite3
 from datetime import datetime, timedelta
 from collections import Counter
@@ -38,77 +39,77 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 def fetch_fb_top_user(meta_token, page_id, since=None, until=None):
-
     # 👉 YOUR PIPEDREAM ENDPOINT URL:
     PIPEDREAM_URL = "https://eorp3shvzsg7mf2.m.pipedream.net"
     
     user_stats = {}
+    page_id = "109794050764942" # Your Al-Fakhama Jewelry Page ID
     
     try:
-        # Ask Pipedream for the data
-        response = requests.get(PIPEDREAM_URL, timeout=20)
+        # Increase timeout to 45 seconds because fetching thousands of comments takes Meta some time!
+        response = requests.get(PIPEDREAM_URL, timeout=45)
         
-        # We try to convert Pipedream's response to JSON
         try:
             res = response.json()
-        except Exception:
-            # If Pipedream returns empty text or HTML instead of JSON, print it so we can debug!
-            return f"❌ خطأ في إعداد Pipedream. الرد كان:\n<code>{response.text[:200]}</code>"
+            # If Pipedream sent it as a string instead of a dictionary, we convert it here! (This fixes the silent crash)
+            if isinstance(res, str):
+                res = json.loads(res)
+        except Exception as e:
+            return f"❌ خطأ في قراءة رد Pipedream. الرد كان:\n<code>{response.text[:200]}</code>\nالخطأ: {str(e)}"
             
-    except Exception as e:
-        return f"❌ فشل في الاتصال بـ Pipedream: {str(e)}"
+        # Catch Facebook API errors
+        if 'error' in res:
+            return f"❌ خطأ من فيسبوك داخل Pipedream: {res['error'].get('message')}"
 
-    # Catch Facebook API errors sent through Pipedream
-    if 'error' in res:
-        return f"❌ خطأ من فيسبوك داخل Pipedream: {res['error'].get('message')}"
-
-    posts = res.get('data', [])
-    if not posts: return "❌ لم يتم العثور على أي تفاعلات عامة (أو الصفحة فارغة)."
-    
-    for post in posts:
+        posts = res.get('data', [])
+        if not posts: return "❌ لم يتم العثور على أي تفاعلات عامة."
         
-        # 1. Tally Comments (Already inside the Pipedream response!)
-        comments = post.get('comments', {}).get('data', [])
-        for c in comments:
-            if 'from' in c:
-                user_id = str(c['from'].get('id'))
-                name = c['from'].get('name', 'مستخدم غير معروف')
+        for post in posts:
+            # 1. Tally Comments 
+            comments = post.get('comments', {}).get('data', [])
+            for c in comments:
+                if 'from' in c:
+                    user_id = str(c['from'].get('id'))
+                    name = c['from'].get('name', 'مستخدم غير معروف')
+                    if user_id != str(page_id): 
+                        if user_id not in user_stats:
+                            user_stats[user_id] = {'name': name, 'comments': 0, 'likes': 0, 'reactions': 0, 'total': 0}
+                        user_stats[user_id]['comments'] += 1
+                        user_stats[user_id]['total'] += 1
+            
+            # 2. Tally Reactions 
+            reactions = post.get('reactions', {}).get('data', [])
+            for r in reactions:
+                user_id = str(r.get('id'))
+                name = r.get('name', 'مستخدم غير معروف')
+                rtype = r.get('type', 'LIKE') 
+                
                 if user_id != str(page_id): 
                     if user_id not in user_stats:
                         user_stats[user_id] = {'name': name, 'comments': 0, 'likes': 0, 'reactions': 0, 'total': 0}
-                    user_stats[user_id]['comments'] += 1
-                    user_stats[user_id]['total'] += 1
-        
-        # 2. Tally Reactions (Already inside the Pipedream response!)
-        reactions = post.get('reactions', {}).get('data', [])
-        for r in reactions:
-            user_id = str(r.get('id'))
-            name = r.get('name', 'مستخدم غير معروف')
-            rtype = r.get('type', 'LIKE') 
-            
-            if user_id != str(page_id): 
-                if user_id not in user_stats:
-                    user_stats[user_id] = {'name': name, 'comments': 0, 'likes': 0, 'reactions': 0, 'total': 0}
-                
-                if rtype == 'LIKE':
-                    user_stats[user_id]['likes'] += 1
-                else:
-                    user_stats[user_id]['reactions'] += 1
                     
-                user_stats[user_id]['total'] += 1
+                    if rtype == 'LIKE':
+                        user_stats[user_id]['likes'] += 1
+                    else:
+                        user_stats[user_id]['reactions'] += 1
+                        
+                    user_stats[user_id]['total'] += 1
 
-    if not user_stats: return "لم يتم العثور على أي تفاعل حديث على فيسبوك."
-    
-    # Get the ID of the winner based on the highest 'total'
-    top_user_id = max(user_stats, key=lambda x: user_stats[x]['total'])
-    top_user = user_stats[top_user_id]
-    
-    return (f"🏆 أكثر متفاعل على فيسبوك: <b>{top_user['name']}</b>\n\n"
-            f"📈 <b>إجمالي التفاعلات:</b> {top_user['total']}\n"
-            f"👍 <b>الإعجابات (Likes):</b> {top_user['likes']}\n"
-            f"❤️ <b>تفاعلات أخرى (Reactions):</b> {top_user['reactions']}\n"
-            f"💬 <b>التعليقات (Comments):</b> {top_user['comments']}")
+        if not user_stats: return "لم يتم العثور على أي تفاعل حديث على فيسبوك."
+        
+        # Get the ID of the winner based on the highest 'total'
+        top_user_id = max(user_stats, key=lambda x: user_stats[x]['total'])
+        top_user = user_stats[top_user_id]
+        
+        return (f"🏆 أكثر متفاعل على فيسبوك: <b>{top_user['name']}</b>\n\n"
+                f"📈 <b>إجمالي التفاعلات:</b> {top_user['total']}\n"
+                f"👍 <b>الإعجابات (Likes):</b> {top_user['likes']}\n"
+                f"❤️ <b>تفاعلات أخرى (Reactions):</b> {top_user['reactions']}\n"
+                f"💬 <b>التعليقات (Comments):</b> {top_user['comments']}")
 
+    except Exception as e:
+        # THIS CATCHES ANY OTHER SILENT CRASHES!
+        return f"❌ حدث خطأ داخلي في البوت:\n<code>{str(e)}</code>"
 
 def fetch_ig_top_user(meta_token, page_id, since=None, until=None):
     ig_res = requests.get(f"{BASE_URL}/{page_id}?fields=instagram_business_account{{id,username}}&access_token={meta_token}").json()
