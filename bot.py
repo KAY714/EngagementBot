@@ -240,6 +240,40 @@ async def get_top_ig(message: types.Message, command: CommandObject):
     await message.reply(fetch_ig_top_user(creds[0], creds[1], since, until), parse_mode="HTML", disable_web_page_preview=True)
 
 
+@dp.message(Command("mypage"))
+async def check_my_page(message: types.Message):
+    creds = get_user_creds(message.from_user.id)
+    if not creds or not creds[0] or not creds[1]: 
+        return await message.reply("⚠️ استخدم /settoken و /setpage أولاً!")
+    
+    meta_token, page_id = creds[0], creds[1]
+    await message.reply("جاري فحص الاتصال بفيسبوك... 🔍")
+    
+    # 1. Ask Facebook for the Page Name
+    fb_res = requests.get(f"{BASE_URL}/{page_id}?access_token={meta_token}").json()
+    
+    if 'error' in fb_res:
+        return await message.reply(f"❌ خطأ في الاتصال: {fb_res['error'].get('message')}")
+    
+    page_name = fb_res.get('name', 'اسم غير معروف')
+    
+    # 2. Ask Facebook for the linked Instagram Account
+    ig_res = requests.get(f"{BASE_URL}/{page_id}?fields=instagram_business_account{{username}}&access_token={meta_token}").json()
+    ig_username = "غير متصل ❌"
+    
+    if 'instagram_business_account' in ig_res:
+        ig_username = f"@{ig_res['instagram_business_account'].get('username', 'Unknown')} ✅"
+        
+    # 3. Send the result
+    info_text = (
+        f"📊 <b>معلومات الحساب المرتبط:</b>\n\n"
+        f"📘 <b>صفحة فيسبوك:</b> {page_name}\n"
+        f"🆔 <b>معرف الصفحة:</b> <code>{page_id}</code>\n"
+        f"📸 <b>إنستغرام:</b> {ig_username}"
+    )
+    
+    await message.reply(info_text, parse_mode="HTML")
+
 async def main():
     Thread(target=run_server, daemon=True).start()
     await dp.start_polling(bot)
